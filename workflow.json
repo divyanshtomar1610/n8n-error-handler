@@ -1,0 +1,224 @@
+{
+  "name": "{WORKSPACE_PREFIX} Error Handler with Alerting v1.0",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Error handler with alerting (v1.0)\nSet this workflow as the Error Workflow of every unattended workflow (Workflow Settings > Error Workflow). It classifies each failure, suppresses repeats, logs to a Notion database, posts P1 and P2 to Slack, emails P1 (and anything Slack could not deliver), then records what was sent.\n\n**Fill before use:** every {PLACEHOLDER} in this canvas, and the five credential pickers: Notion on Repeat Check, Write to Error Log and Patch Alerted; Slack on Slack Alert; Gmail on Gmail Alert. Setup guide: SETUP.md, in the same repository as this file.\n\n**Tiers:** P1 = Slack + email. P2 = Slack. P3 = log only.\n**Repeat suppression:** same workflow + node + severity + message prefix inside 1 h (P1) or 6 h (P2) is written to the log and not re-sent.\n**Recursion trap:** the log is written before any message is sent; Slack failure falls through to email.\n**Positive control:** build the companion fault-injector workflow from the guide and fire it after every change.",
+        "height": 380,
+        "width": 720,
+        "color": 4
+      },
+      "id": "eh-template-0001-4000-8000-000000000001",
+      "name": "Guide",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-80, -440]
+    },
+    {
+      "parameters": {},
+      "id": "eh-template-0001-4000-8000-000000000002",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "let out;\ntry {\n  const d = $json || {};\n  const exec = d.execution || {};\n  const err = exec.error || {};\n  const trig = d.trigger || {};\n  const terr = trig.error || {};\n  const wfName = (d.workflow && d.workflow.name) || 'unknown';\n  const wfId = (d.workflow && d.workflow.id) || '';\n  const node = (err.node && err.node.name) || exec.lastNodeExecuted || (terr.node && terr.node.name) || 'trigger';\n  const msg = String(err.message || terr.message || 'Unknown error').slice(0, 1900);\n  const errName = String(err.name || terr.name || '');\n  const execId = String(exec.id || '');\n  const execUrl = exec.url || '';\n  const mode = exec.mode || trig.mode || '';\n  const now = Date.now();\n\n  // RULE TABLE, first match wins. Edit the four settings below for your estate.\n  // 1. Workflows that are NOT production (test, demo, the fault injector): log only.\n  const nonProd = /{NON_PRODUCTION_NAME_PATTERN}/i.test(wfName) || /Fault Injector/i.test(wfName);\n  // 2. Messages that mean a record was lost or unconfirmed (your dead-letter alarm names).\n  const p1Alarm = /{P1_ALARM_PATTERN}/i;\n  // 3. Node names whose failure means a customer record was not written.\n  const p1Nodes = [{P1_NODE_NAMES}];\n  // 4. Workflows whose ANY failure is critical (for example client onboarding).\n  const p1Workflows = /{P1_WORKFLOW_NAME_PATTERN}/;\n  const authFail = /unauthori[sz]ed|invalid[_ ]?(token|grant|credential)|token (has )?expired|status code (401|403)\\b/i;\n  // Dated mutes for KNOWN conditions. Each expires by itself; never add one without a date.\n  const knownConditions = [\n    // { messageContains: 'text that identifies the known condition', muteUntil: '2026-12-31T00:00:00Z', why: 'reason' }\n  ];\n\n  let tier = 'P2', reason = 'production failure (default)';\n  const inj = msg.match(/FAULT-INJECTOR (P[123])/i);\n  if (inj) { tier = inj[1].toUpperCase(); reason = 'fault injector'; }\n  else if (nonProd) { tier = 'P3'; reason = 'non-production workflow'; }\n  else if (p1Alarm.test(msg) || p1Alarm.test(node)) { tier = 'P1'; reason = 'dead-letter alarm'; }\n  else if (p1Nodes.includes(node)) { tier = 'P1'; reason = 'record write failed'; }\n  else if (p1Workflows.test(wfName)) { tier = 'P1'; reason = 'critical workflow'; }\n  else if (authFail.test(msg) || authFail.test(errName)) { tier = 'P1'; reason = 'credential or auth failure'; }\n\n  const mute = knownConditions.find(k => msg.includes(k.messageContains) && now < Date.parse(k.muteUntil));\n  const windowHours = tier === 'P1' ? 1 : 6;\n  const msgPrefix = msg.split(/\\d{4}-\\d{2}-\\d{2}T/)[0].slice(0, 80).trim();\n  out = { tier, reason, muted: !!mute, muteWhy: mute ? (mute.why + ', muted until ' + mute.muteUntil) : '', windowHours, msgPrefix, wfName, wfId, node, msg, errName, execId, execUrl, mode, when: new Date(now).toISOString(), since: new Date(now - windowHours * 3600 * 1000).toISOString(), classifyError: '' };\n} catch (e) {\n  const m = String((e && e.message) || e);\n  out = { tier: 'P2', reason: 'classifier threw, defaulted to P2', muted: false, muteWhy: '', windowHours: 6, msgPrefix: '', wfName: 'unknown', wfId: '', node: 'unknown', msg: 'Classify error: ' + m, errName: '', execId: '', execUrl: '', mode: '', when: new Date().toISOString(), since: new Date(Date.now() - 6 * 3600 * 1000).toISOString(), classifyError: m };\n}\nreturn [{ json: out }];"
+      },
+      "id": "eh-template-0001-4000-8000-000000000003",
+      "name": "Classify",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [224, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/databases/{NOTION_ERROR_LOG_DATABASE_ID}/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [ { "name": "Notion-Version", "value": "2022-06-28" } ] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ page_size: 1, filter: { and: [ { property: 'Workflow', rich_text: { contains: ($json.wfId || $json.wfName) } }, { property: 'Node', rich_text: { equals: $json.node } }, { property: 'Severity', select: { equals: $json.tier } }, { property: 'Message', rich_text: { contains: ($json.msgPrefix || $json.msg || 'no-message').slice(0, 80) } }, { property: 'When', date: { on_or_after: $json.since } } ] } }) }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "eh-template-0001-4000-8000-000000000004",
+      "name": "Repeat Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [448, 0],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "notes": "Repeat suppression state store. Fails OPEN: both outputs reach Format Error; a failed query means no suppression. Pick the Notion credential here."
+    },
+    {
+      "parameters": {
+        "jsCode": "const c = $('Classify').first().json;\nconst q = $json || {};\nconst queryOk = Array.isArray(q.results);\nconst repeat = queryOk && q.results.length > 0;\nconst repeatCheckFailed = !queryOk;\nconst title = (c.wfName + ' -> ' + c.node + (repeat ? ' (repeat)' : '') + (c.muted ? ' (muted)' : '')).slice(0, 2000);\nconst props = {\n  'Error': { title: [{ text: { content: title } }] },\n  'Workflow': { rich_text: [{ text: { content: c.wfName + ' (' + c.wfId + ')' } }] },\n  'Node': { rich_text: [{ text: { content: c.node } }] },\n  'Message': { rich_text: [{ text: { content: c.msg } }] },\n  'Execution ID': { rich_text: [{ text: { content: c.execId } }] },\n  'Status': { select: { name: 'New' } },\n  'When': { date: { start: c.when } },\n  'Severity': { select: { name: c.tier } }\n};\nconst notify = c.tier !== 'P3' && !repeat && !c.muted;\nif (!notify) props['Alerted'] = { select: { name: c.muted ? 'Muted' : (repeat ? 'Suppressed' : 'None') } };\nreturn [{ json: { notionBody: { parent: { database_id: '{NOTION_ERROR_LOG_DATABASE_ID}' }, properties: props }, notify, email: notify && c.tier === 'P1', repeat, repeatCheckFailed } }];"
+      },
+      "id": "eh-template-0001-4000-8000-000000000005",
+      "name": "Format Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [672, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [ { "name": "Notion-Version", "value": "2022-06-28" } ] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.notionBody) }}",
+        "options": {}
+      },
+      "id": "eh-template-0001-4000-8000-000000000006",
+      "name": "Write to Error Log",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [896, 0],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "notes": "Log first, alert second. Error output is wired forward so a Notion outage still produces the alert. Pick the Notion credential here."
+    },
+    {
+      "parameters": {
+        "jsCode": "const c = $('Classify').first().json;\nconst f = $('Format Error').first().json;\nconst w = $json || {};\nconst pageId = w.object === 'page' ? w.id : '';\nconst notionUrl = w.object === 'page' ? w.url : '';\nconst emoji = c.tier === 'P1' ? ':rotating_light:' : ':warning:';\nconst lines = [\n  `${emoji} *${c.tier}* (${c.reason}): *${c.wfName}* failed at \\`${c.node}\\``,\n  `Error: ${c.msg.slice(0, 500)}`,\n  c.execUrl ? `Execution: ${c.execUrl}` : `Execution ID: ${c.execId || 'n/a'} (trigger-stage failure, no URL)`,\n  notionUrl ? `Log row: ${notionUrl}` : 'Log row: WRITE FAILED, this message is the only record',\n  f.repeatCheckFailed ? 'Repeat check unavailable (Notion query failed), sent unsuppressed' : '',\n  c.classifyError ? `Classifier error: ${c.classifyError}` : '',\n  c.tier === 'P1' ? '{P1_RECOVERY_LINE}' : ''\n].filter(Boolean);\nconst text = lines.join('\\n');\nreturn [{ json: { notify: f.notify, email: f.email, tier: c.tier, pageId, notionUrl, slackText: text, emailSubject: `[${c.tier}] ${c.wfName} failed at ${c.node}`, emailBody: text.replace(/[*`]/g, '') } }];"
+      },
+      "id": "eh-template-0001-4000-8000-000000000007",
+      "name": "Build Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+          "combinator": "and",
+          "conditions": [ { "id": "n1", "leftValue": "={{ $json.notify }}", "operator": { "type": "boolean", "operation": "true", "singleValue": true } } ]
+        },
+        "options": {}
+      },
+      "id": "eh-template-0001-4000-8000-000000000008",
+      "name": "Notify?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1344, 0]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": { "__rl": true, "mode": "id", "value": "{SLACK_CHANNEL_ID}" },
+        "text": "={{ $json.slackText }}",
+        "otherOptions": { "includeLinkToWorkflow": false }
+      },
+      "id": "eh-template-0001-4000-8000-000000000009",
+      "name": "Slack Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.5,
+      "position": [1568, -112],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "notes": "Pick the Slack credential here. The Slack app must be a member of the channel (private channels need an explicit invite). Error output falls through to Gmail Alert."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+          "combinator": "and",
+          "conditions": [ { "id": "e1", "leftValue": "={{ $('Build Alert').first().json.email }}", "operator": { "type": "boolean", "operation": "true", "singleValue": true } } ]
+        },
+        "options": {}
+      },
+      "id": "eh-template-0001-4000-8000-000000000010",
+      "name": "Email too?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1792, -112]
+    },
+    {
+      "parameters": {
+        "sendTo": "{ALERT_EMAIL}",
+        "subject": "={{ $('Build Alert').first().json.emailSubject }}",
+        "emailType": "text",
+        "message": "={{ $('Build Alert').first().json.emailBody }}",
+        "options": { "appendAttribution": false, "senderName": "{ALERT_SENDER_NAME}" }
+      },
+      "id": "eh-template-0001-4000-8000-000000000011",
+      "name": "Gmail Alert",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [2016, 0],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "notes": "Pick the Gmail credential here. P1 always; every tier when Slack failed. Last hop: its failure ends the run."
+    },
+    {
+      "parameters": {
+        "jsCode": "const b = $('Build Alert').first().json;\nif (!b.pageId) return [];\nlet slackOk = false, emailOk = false;\ntry { const s = $('Slack Alert').first().json; slackOk = !!(s && (s.ok === true || s.ts || s.message)); } catch (e) {}\ntry { const g = $('Gmail Alert').first().json; emailOk = !!(g && (g.id || g.threadId)); } catch (e) {}\nconst alerted = slackOk && emailOk ? 'Both' : slackOk ? 'Slack' : emailOk ? 'Email' : 'None';\nreturn [{ json: { pageId: b.pageId, alerted, body: { properties: { 'Alerted': { select: { name: alerted } } } } } }];"
+      },
+      "id": "eh-template-0001-4000-8000-000000000012",
+      "name": "Mark Alerted",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2240, 0]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.notion.com/v1/pages/{{ $json.pageId }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [ { "name": "Notion-Version", "value": "2022-06-28" } ] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "eh-template-0001-4000-8000-000000000013",
+      "name": "Patch Alerted",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2464, 0],
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "notes": "Writes the Alerted fact back onto the log row. Pick the Notion credential here."
+    }
+  ],
+  "connections": {
+    "Error Trigger": { "main": [ [ { "node": "Classify", "type": "main", "index": 0 } ] ] },
+    "Classify": { "main": [ [ { "node": "Repeat Check", "type": "main", "index": 0 } ] ] },
+    "Repeat Check": { "main": [ [ { "node": "Format Error", "type": "main", "index": 0 } ], [ { "node": "Format Error", "type": "main", "index": 0 } ] ] },
+    "Format Error": { "main": [ [ { "node": "Write to Error Log", "type": "main", "index": 0 } ] ] },
+    "Write to Error Log": { "main": [ [ { "node": "Build Alert", "type": "main", "index": 0 } ], [ { "node": "Build Alert", "type": "main", "index": 0 } ] ] },
+    "Build Alert": { "main": [ [ { "node": "Notify?", "type": "main", "index": 0 } ] ] },
+    "Notify?": { "main": [ [ { "node": "Slack Alert", "type": "main", "index": 0 } ], [] ] },
+    "Slack Alert": { "main": [ [ { "node": "Email too?", "type": "main", "index": 0 } ], [ { "node": "Gmail Alert", "type": "main", "index": 0 } ] ] },
+    "Email too?": { "main": [ [ { "node": "Gmail Alert", "type": "main", "index": 0 } ], [ { "node": "Mark Alerted", "type": "main", "index": 0 } ] ] },
+    "Gmail Alert": { "main": [ [ { "node": "Mark Alerted", "type": "main", "index": 0 } ] ] },
+    "Mark Alerted": { "main": [ [ { "node": "Patch Alerted", "type": "main", "index": 0 } ] ] }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 60
+  }
+}
