@@ -57,9 +57,9 @@ Regular-expression placeholders (`{NON_PRODUCTION_NAME_PATTERN}`, `{P1_ALARM_PAT
 |---|---|---|
 | `{WORKSPACE_PREFIX}` | workflow name | a short tag that groups your workflows, or delete it |
 | `{NOTION_ERROR_LOG_DATABASE_ID}` | Repeat Check (URL), Format Error (code) | the database ID from 1a, in both places |
-| `{NON_PRODUCTION_NAME_PATTERN}` | Classify | a regular expression matching workflow names that are NOT production, for example `^(TEMP|TEST|DEMO)`; use `^$` if none |
-| `{P1_ALARM_PATTERN}` | Classify | words your own dead-letter alarms use, for example `Persist Failure Alarm|Delivery Failed`; use `^$` if you have none |
-| `{P1_NODE_NAMES}` | Classify | single-quoted node names separated by commas, no outer brackets (the code already has them), for example `'Create CRM Contact', 'Save Lead'`; if none, delete the placeholder so the line reads `const p1Nodes = [];` |
+| `{NON_PRODUCTION_NAME_PATTERN}` | Classify | a regular expression matching workflow names that are NOT production, for example `^(TEMP\|TEST\|DEMO)`; use `^$` if none |
+| `{P1_ALARM_PATTERN}` | Classify | words your own dead-letter alarms use, for example `Persist Failure Alarm\|Delivery Failed`; use `^$` if you have none |
+| `{P1_NODE_NAMES}` | Classify | single-quoted node names separated by commas, no outer brackets (the code already has them), for example `'Create CRM Contact', 'Save Lead'`; if none, delete the placeholder so the line reads `const p1Nodes = [];`. No apostrophes inside a name: the list is pasted into JavaScript, and an apostrophe stops the node compiling, so the handler fails with no alert |
 | `{P1_WORKFLOW_NAME_PATTERN}` | Classify | a regular expression for workflows whose any failure is critical, for example `^Client Onboarding`; use `^$` to disable |
 | `{P1_RECOVERY_LINE}` | Build Alert | the one line you want on every P1, for example `Recovery: open the workflow, read its notes, if a send failed check sent history before sending by hand, never re-execute` (no apostrophes) |
 | `{SLACK_CHANNEL_ID}` | Slack Alert | the channel ID from 1b |
@@ -67,7 +67,7 @@ Regular-expression placeholders (`{NON_PRODUCTION_NAME_PATTERN}`, `{P1_ALARM_PAT
 | `{ALERT_SENDER_NAME}` | Gmail Alert | the name the alert email shows as sender |
 
 3. Pick credentials on the five credential pickers: Notion on Repeat Check, Write to Error Log and Patch Alerted; Slack on Slack Alert; Gmail on Gmail Alert.
-4. Save. Error workflows do not need to be published; n8n runs them when a linked workflow fails.
+4. Save, then **Publish**. n8n runs only the published version of an error workflow: an unpublished handler is skipped with "is not active and cannot be executed", and a saved edit does nothing until you publish again. Publish after every change, before you re-fire the injector.
 5. Wire it in: open every unattended workflow, Options (three dots), Settings, Error workflow, select this one. If you have many workflows, the public REST API accepts `settings.errorWorkflow` (this handler's workflow ID) on the workflow update call.
 
 ---
@@ -101,7 +101,7 @@ Error workflows cannot be tested from a manual run, and you do not want to break
 5. Settings: Error Workflow = the handler; save; publish (the cron cannot fire in a non-leap year, so publishing is inert until 2028).
 6. Never add a credential or any node that touches a real system to this workflow.
 
-**To fire it:** you need something that can start a production execution from a chosen trigger. n8n's own MCP server tools can do this (the workflow must be marked available to MCP in its settings); the public REST API cannot, as of the current specification. Without such a tool, temporarily change one trigger's cron to two minutes ahead, wait for it, then restore the never-fires expression. Then check: P1 produced a Slack message and an email; P2 a Slack message; P3 only a log row; a second P2 inside 6 hours a row marked Suppressed and no message.
+**To fire it:** you need something that can start a production execution from a chosen trigger. n8n's own MCP server tools can do this (the workflow must be marked available to MCP in its settings); the public REST API cannot, as of the current specification. Without such a tool, temporarily change one trigger's cron to two minutes ahead, save and publish, wait for it, then restore the never-fires expression and publish again. Then check: P1 produced a Slack message and an email; P2 a Slack message; P3 only a log row; a second P2 inside 6 hours a row marked Suppressed and no message.
 
 ---
 
@@ -140,7 +140,7 @@ An alert tells you a node failed. If that node sends something to a customer or 
 
 ## 7. Maintenance
 
-- Re-run the fault injector after any change to the handler, and once a quarter regardless.
+- Re-run the fault injector after any change to the handler (publish first), and once a quarter regardless. Before re-firing, archive the earlier injector rows in the Notion log, or wait out the window (1 hour for P1, 6 hours for P2 and P3); otherwise every tier comes back as Suppressed and proves nothing.
 - Review `knownConditions` when a mute expires: fix the cause or extend the date consciously.
 - If the Slack channel is renamed or replaced, update `{SLACK_CHANNEL_ID}` and re-fire P2.
 - If your log database gains or loses properties, update Format Error to match; the write fails otherwise (and the alert still goes out, saying so).

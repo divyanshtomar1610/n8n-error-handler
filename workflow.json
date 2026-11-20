@@ -12,7 +12,10 @@
       "name": "Guide",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [-80, -440]
+      "position": [
+        -80,
+        -440
+      ]
     },
     {
       "parameters": {},
@@ -20,17 +23,23 @@
       "name": "Error Trigger",
       "type": "n8n-nodes-base.errorTrigger",
       "typeVersion": 1,
-      "position": [0, 0]
+      "position": [
+        0,
+        0
+      ]
     },
     {
       "parameters": {
-        "jsCode": "let out;\ntry {\n  const d = $json || {};\n  const exec = d.execution || {};\n  const err = exec.error || {};\n  const trig = d.trigger || {};\n  const terr = trig.error || {};\n  const wfName = (d.workflow && d.workflow.name) || 'unknown';\n  const wfId = (d.workflow && d.workflow.id) || '';\n  const node = (err.node && err.node.name) || exec.lastNodeExecuted || (terr.node && terr.node.name) || 'trigger';\n  // Error text can carry secrets (a URL with a key in it, a token in a header). Mask them\n  // before the text is logged or sent anywhere.\n  const redact = (t) => String(t)\n    .replace(/(https?:\\/\\/[^\\s?#\"']+)\\?[^\\s\"']*/gi, '$1?[query removed]')\n    .replace(/\\b(bearer|basic)\\s+[A-Za-z0-9._~+\\/=-]{8,}/gi, '$1 [redacted]')\n    .replace(/\\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|passwd|authorization)([\"']?\\s*[:=]\\s*[\"']?)(?!bearer\\b|basic\\b)[^\\s\"',;&]+/gi, '$1$2[redacted]')\n    .replace(/\\b[A-Za-z0-9+\\/_-]{40,}={0,2}/g, '[redacted]');\n  const msg = redact(err.message || terr.message || 'Unknown error').slice(0, 1900);\n  const errName = String(err.name || terr.name || '');\n  const execId = String(exec.id || '');\n  const execUrl = exec.url || '';\n  const mode = exec.mode || trig.mode || '';\n  const now = Date.now();\n\n  // RULE TABLE, first match wins. Edit the four settings below for your estate.\n  // 1. Workflows that are NOT production (test, demo, the fault injector): log only.\n  const nonProd = /{NON_PRODUCTION_NAME_PATTERN}/i.test(wfName) || /Fault Injector/i.test(wfName);\n  // 2. Messages that mean a record was lost or unconfirmed (your dead-letter alarm names).\n  const p1Alarm = /{P1_ALARM_PATTERN}/i;\n  // 3. Node names whose failure means a customer record was not written.\n  const p1Nodes = [{P1_NODE_NAMES}];\n  // 4. Workflows whose ANY failure is critical (for example client onboarding).\n  const p1Workflows = /{P1_WORKFLOW_NAME_PATTERN}/;\n  const authFail = /unauthori[sz]ed|invalid[_ ]?(token|grant|credential)|token (has )?expired|status code (401|403)\\b/i;\n  // Dated mutes for KNOWN conditions. Each expires by itself; never add one without a date.\n  const knownConditions = [\n    // { messageContains: 'text that identifies the known condition', muteUntil: '2026-12-31T00:00:00Z', why: 'reason' }\n  ];\n\n  let tier = 'P2', reason = 'production failure (default)';\n  const inj = msg.match(/FAULT-INJECTOR (P[123])/i);\n  // The test override counts only when the failing workflow IS the fault injector. The name\n  // comes from n8n, not from the error text, so an error message cannot lower its own tier.\n  if (inj && /Fault Injector/i.test(wfName)) { tier = inj[1].toUpperCase(); reason = 'fault injector'; }\n  else if (nonProd) { tier = 'P3'; reason = 'non-production workflow'; }\n  else if (p1Alarm.test(msg) || p1Alarm.test(node)) { tier = 'P1'; reason = 'dead-letter alarm'; }\n  else if (p1Nodes.includes(node)) { tier = 'P1'; reason = 'record write failed'; }\n  else if (p1Workflows.test(wfName)) { tier = 'P1'; reason = 'critical workflow'; }\n  else if (authFail.test(msg) || authFail.test(errName)) { tier = 'P1'; reason = 'credential or auth failure'; }\n\n  const mute = knownConditions.find(k => msg.includes(k.messageContains) && now < Date.parse(k.muteUntil));\n  const windowHours = tier === 'P1' ? 1 : 6;\n  const msgPrefix = msg.split(/\\d{4}-\\d{2}-\\d{2}T/)[0].slice(0, 80).trim();\n  out = { tier, reason, muted: !!mute, muteWhy: mute ? (mute.why + ', muted until ' + mute.muteUntil) : '', windowHours, msgPrefix, wfName, wfId, node, msg, errName, execId, execUrl, mode, when: new Date(now).toISOString(), since: new Date(now - windowHours * 3600 * 1000).toISOString(), classifyError: '' };\n} catch (e) {\n  const m = String((e && e.message) || e);\n  out = { tier: 'P2', reason: 'classifier threw, defaulted to P2', muted: false, muteWhy: '', windowHours: 6, msgPrefix: '', wfName: 'unknown', wfId: '', node: 'unknown', msg: 'Classify error: ' + m, errName: '', execId: '', execUrl: '', mode: '', when: new Date().toISOString(), since: new Date(Date.now() - 6 * 3600 * 1000).toISOString(), classifyError: m };\n}\nreturn [{ json: out }];"
+        "jsCode": "let out;\nconst d = $json || {};\nconst exec = d.execution || {};\nconst err = exec.error || {};\nconst trig = d.trigger || {};\nconst terr = trig.error || {};\nconst wfName = (d.workflow && d.workflow.name) || 'unknown';\nconst wfId = (d.workflow && d.workflow.id) || '';\ntry {\n  const node = (err.node && err.node.name) || exec.lastNodeExecuted || (terr.node && terr.node.name) || 'trigger';\n  // Error text can carry secrets (a URL with a key in it, a token in a header). Mask them\n  // before the text is logged or sent anywhere.\n  const redact = (t) => String(t)\n    .replace(/\\b([a-z][a-z0-9+.-]*:\\/\\/)[^\\s\\/@:\"']+:[^\\s\\/@\"']+@/gi, '$1[redacted]@')\n    .replace(/(https?:\\/\\/[^\\s?#\"']+)\\?[^\\s\"']*/gi, '$1?[query removed]')\n    .replace(/(hooks\\.slack\\.com\\/services\\/|api\\.telegram\\.org\\/bot)[^\\s\"']+/gi, '$1[redacted]')\n    .replace(/\\b([Bb]earer|[Bb]asic|BEARER|BASIC)\\s+(?=[A-Za-z0-9._~+\\/=-]*(?:\\d|[a-z][A-Z]))[A-Za-z0-9._~+\\/=-]{8,}/g, '$1 [redacted]')   // a token, not the word after \"basic\" in a sentence\n    .replace(/([A-Za-z0-9_-]*(?:api[_-]?key|token|secret(?:[_-]?(?:access[_-]?)?key)?|password|passwd|pwd|authorization))([\"']?\\s*[:=]\\s*[\"']?)(?!bearer\\b|basic\\b)[^\\s\"',;&]+/gi, '$1$2[redacted]')\n    .replace(/\\S+/g, (tok) => /^https?:\\/\\//i.test(tok) || tok.includes('/') ? tok : tok.replace(/[A-Za-z0-9+_-]{40,}={0,2}/g, '[redacted]'));   // long runs, never inside a link or a file path\n  const msg = redact(err.message || terr.message || 'Unknown error').slice(0, 1900);\n  const errName = String(err.name || terr.name || '');\n  const execId = String(exec.id || '');\n  const execUrl = exec.url || '';\n  const mode = exec.mode || trig.mode || '';\n  const now = Date.now();\n\n  // RULE TABLE, first match wins. Edit the four settings below for your estate.\n  // 1. Workflows that are NOT production (test, demo, the fault injector): log only.\n  const nonProd = /{NON_PRODUCTION_NAME_PATTERN}/i.test(wfName) || /Fault Injector/i.test(wfName);\n  // 2. Messages that mean a record was lost or unconfirmed (your dead-letter alarm names).\n  const p1Alarm = /{P1_ALARM_PATTERN}/i;\n  // 3. Node names whose failure means a customer record was not written.\n  const p1Nodes = [{P1_NODE_NAMES}];\n  // 4. Workflows whose ANY failure is critical (for example client onboarding).\n  const p1Workflows = /{P1_WORKFLOW_NAME_PATTERN}/i;\n  const authFail = /unauthori[sz]ed|invalid[_ ]?(token|grant|credential)|token (has )?expired|status code (401|403)\\b/i;\n  // Dated mutes for KNOWN conditions. Each expires by itself; never add one without a date.\n  const knownConditions = [\n    // { messageContains: 'text that identifies the known condition', muteUntil: '2026-12-31T00:00:00Z', why: 'reason' }\n  ];\n\n  let tier = 'P2', reason = 'production failure (default)';\n  const inj = msg.match(/FAULT-INJECTOR (P[123])/i);\n  // The test override counts only when the failing workflow IS the fault injector. The name\n  // comes from n8n, not from the error text, so an error message cannot lower its own tier.\n  if (inj && /Fault Injector/i.test(wfName)) { tier = inj[1].toUpperCase(); reason = 'fault injector'; }\n  else if (nonProd) { tier = 'P3'; reason = 'non-production workflow'; }\n  else if (p1Alarm.test(msg) || p1Alarm.test(node)) { tier = 'P1'; reason = 'dead-letter alarm'; }\n  else if (p1Nodes.includes(node)) { tier = 'P1'; reason = 'record write failed'; }\n  else if (p1Workflows.test(wfName)) { tier = 'P1'; reason = 'critical workflow'; }\n  else if (authFail.test(msg) || authFail.test(errName)) { tier = 'P1'; reason = 'credential or auth failure'; }\n\n  const mute = knownConditions.find(k => msg.includes(k.messageContains) && now < Date.parse(k.muteUntil));\n  const windowHours = tier === 'P1' ? 1 : 6;\n  const msgPrefix = msg.split(/\\d{4}-\\d{2}-\\d{2}T/)[0].slice(0, 80).trim();\n  out = { tier, reason, muted: !!mute, muteWhy: mute ? (mute.why + ', muted until ' + mute.muteUntil) : '', windowHours, msgPrefix, wfName, wfId, node, msg, errName, execId, execUrl, mode, when: new Date(now).toISOString(), since: new Date(now - windowHours * 3600 * 1000).toISOString(), classifyError: '' };\n} catch (e) {\n  const m = String((e && e.message) || e);\n  out = { tier: 'P2', reason: 'classifier threw, defaulted to P2', muted: false, muteWhy: '', windowHours: 6, msgPrefix: ('Classify error: ' + m).slice(0, 80), wfName, wfId, node: (err.node && err.node.name) || exec.lastNodeExecuted || 'unknown', msg: 'Classify error: ' + m, errName: '', execId: String(exec.id || ''), execUrl: exec.url || '', mode: exec.mode || '', when: new Date().toISOString(), since: new Date(Date.now() - 6 * 3600 * 1000).toISOString(), classifyError: m };\n}\nreturn [{ json: out }];"
       },
       "id": "eh-template-0001-4000-8000-000000000003",
       "name": "Classify",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [224, 0]
+      "position": [
+        224,
+        0
+      ]
     },
     {
       "parameters": {
@@ -39,17 +48,29 @@
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "notionApi",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [ { "name": "Notion-Version", "value": "2022-06-28" } ] },
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ page_size: 1, filter: { and: [ { property: 'Workflow', rich_text: { contains: ($json.wfId || $json.wfName) } }, { property: 'Node', rich_text: { equals: $json.node } }, { property: 'Severity', select: { equals: $json.tier } }, { property: 'Message', rich_text: { contains: ($json.msgPrefix || $json.msg || 'no-message').slice(0, 80) } }, { property: 'When', date: { on_or_after: $json.since } } ] } }) }}",
-        "options": { "timeout": 10000 }
+        "jsonBody": "={{ JSON.stringify({ page_size: 1, filter: { and: [ { property: 'Workflow', rich_text: { contains: ($json.wfId || $json.wfName) } }, { property: 'Node', rich_text: { equals: $json.node } }, { property: 'Severity', select: { equals: $json.tier } }, { property: 'Message', rich_text: { contains: ($json.msgPrefix || $json.msg || 'no-message').slice(0, 80) } }, { property: 'When', date: { on_or_after: $json.since } }, { or: [ { property: 'Alerted', select: { equals: 'Both' } }, { property: 'Alerted', select: { equals: 'Slack' } }, { property: 'Alerted', select: { equals: 'Email' } } ] } ] } }) }}",
+        "options": {
+          "timeout": 10000
+        }
       },
       "id": "eh-template-0001-4000-8000-000000000004",
       "name": "Repeat Check",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [448, 0],
+      "position": [
+        448,
+        0
+      ],
       "onError": "continueErrorOutput",
       "retryOnFail": true,
       "maxTries": 2,
@@ -64,7 +85,10 @@
       "name": "Format Error",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [672, 0]
+      "position": [
+        672,
+        0
+      ]
     },
     {
       "parameters": {
@@ -73,17 +97,29 @@
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "notionApi",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [ { "name": "Notion-Version", "value": "2022-06-28" } ] },
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.notionBody) }}",
-        "options": {}
+        "options": {
+          "timeout": 10000
+        }
       },
       "id": "eh-template-0001-4000-8000-000000000006",
       "name": "Write to Error Log",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [896, 0],
+      "position": [
+        896,
+        0
+      ],
       "onError": "continueErrorOutput",
       "retryOnFail": true,
       "maxTries": 3,
@@ -98,14 +134,32 @@
       "name": "Build Alert",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1120, 0]
+      "position": [
+        1120,
+        0
+      ]
     },
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
           "combinator": "and",
-          "conditions": [ { "id": "n1", "leftValue": "={{ $json.notify }}", "operator": { "type": "boolean", "operation": "true", "singleValue": true } } ]
+          "conditions": [
+            {
+              "id": "n1",
+              "leftValue": "={{ $json.notify }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
         },
         "options": {}
       },
@@ -113,21 +167,33 @@
       "name": "Notify?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1344, 0]
+      "position": [
+        1344,
+        0
+      ]
     },
     {
       "parameters": {
         "authentication": "oAuth2",
         "select": "channel",
-        "channelId": { "__rl": true, "mode": "id", "value": "{SLACK_CHANNEL_ID}" },
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "{SLACK_CHANNEL_ID}"
+        },
         "text": "={{ $json.slackText }}",
-        "otherOptions": { "includeLinkToWorkflow": false }
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
       },
       "id": "eh-template-0001-4000-8000-000000000009",
       "name": "Slack Alert",
       "type": "n8n-nodes-base.slack",
       "typeVersion": 2.5,
-      "position": [1568, -112],
+      "position": [
+        1568,
+        -112
+      ],
       "onError": "continueErrorOutput",
       "retryOnFail": true,
       "maxTries": 2,
@@ -137,9 +203,24 @@
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
           "combinator": "and",
-          "conditions": [ { "id": "e1", "leftValue": "={{ $('Build Alert').first().json.email }}", "operator": { "type": "boolean", "operation": "true", "singleValue": true } } ]
+          "conditions": [
+            {
+              "id": "e1",
+              "leftValue": "={{ $('Build Alert').first().json.email }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
         },
         "options": {}
       },
@@ -147,7 +228,10 @@
       "name": "Email too?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1792, -112]
+      "position": [
+        1792,
+        -112
+      ]
     },
     {
       "parameters": {
@@ -155,17 +239,24 @@
         "subject": "={{ $('Build Alert').first().json.emailSubject }}",
         "emailType": "text",
         "message": "={{ $('Build Alert').first().json.emailBody }}",
-        "options": { "appendAttribution": false, "senderName": "{ALERT_SENDER_NAME}" }
+        "options": {
+          "appendAttribution": false,
+          "senderName": "{ALERT_SENDER_NAME}"
+        }
       },
       "id": "eh-template-0001-4000-8000-000000000011",
       "name": "Gmail Alert",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
-      "position": [2016, 0],
+      "position": [
+        2016,
+        0
+      ],
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 3000,
-      "notes": "Pick the Gmail credential here. P1 always; every tier when Slack failed. Last hop: its failure ends the run."
+      "notes": "Pick the Gmail credential here. P1 always; every tier when Slack failed. Last hop: its failure ends the run.",
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
@@ -175,7 +266,10 @@
       "name": "Mark Alerted",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2240, 0]
+      "position": [
+        2240,
+        0
+      ]
     },
     {
       "parameters": {
@@ -184,17 +278,29 @@
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "notionApi",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [ { "name": "Notion-Version", "value": "2022-06-28" } ] },
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.body) }}",
-        "options": { "timeout": 10000 }
+        "options": {
+          "timeout": 10000
+        }
       },
       "id": "eh-template-0001-4000-8000-000000000013",
       "name": "Patch Alerted",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2464, 0],
+      "position": [
+        2464,
+        0
+      ],
       "onError": "continueRegularOutput",
       "retryOnFail": true,
       "maxTries": 2,
@@ -203,22 +309,161 @@
     }
   ],
   "connections": {
-    "Error Trigger": { "main": [ [ { "node": "Classify", "type": "main", "index": 0 } ] ] },
-    "Classify": { "main": [ [ { "node": "Repeat Check", "type": "main", "index": 0 } ] ] },
-    "Repeat Check": { "main": [ [ { "node": "Format Error", "type": "main", "index": 0 } ], [ { "node": "Format Error", "type": "main", "index": 0 } ] ] },
-    "Format Error": { "main": [ [ { "node": "Write to Error Log", "type": "main", "index": 0 } ] ] },
-    "Write to Error Log": { "main": [ [ { "node": "Build Alert", "type": "main", "index": 0 } ], [ { "node": "Build Alert", "type": "main", "index": 0 } ] ] },
-    "Build Alert": { "main": [ [ { "node": "Notify?", "type": "main", "index": 0 } ] ] },
-    "Notify?": { "main": [ [ { "node": "Slack Alert", "type": "main", "index": 0 } ], [] ] },
-    "Slack Alert": { "main": [ [ { "node": "Email too?", "type": "main", "index": 0 } ], [ { "node": "Gmail Alert", "type": "main", "index": 0 } ] ] },
-    "Email too?": { "main": [ [ { "node": "Gmail Alert", "type": "main", "index": 0 } ], [ { "node": "Mark Alerted", "type": "main", "index": 0 } ] ] },
-    "Gmail Alert": { "main": [ [ { "node": "Mark Alerted", "type": "main", "index": 0 } ] ] },
-    "Mark Alerted": { "main": [ [ { "node": "Patch Alerted", "type": "main", "index": 0 } ] ] }
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Classify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify": {
+      "main": [
+        [
+          {
+            "node": "Repeat Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Repeat Check": {
+      "main": [
+        [
+          {
+            "node": "Format Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Error": {
+      "main": [
+        [
+          {
+            "node": "Write to Error Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write to Error Log": {
+      "main": [
+        [
+          {
+            "node": "Build Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Alert": {
+      "main": [
+        [
+          {
+            "node": "Notify?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify?": {
+      "main": [
+        [
+          {
+            "node": "Slack Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Slack Alert": {
+      "main": [
+        [
+          {
+            "node": "Email too?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Gmail Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email too?": {
+      "main": [
+        [
+          {
+            "node": "Gmail Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Alerted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail Alert": {
+      "main": [
+        [
+          {
+            "node": "Mark Alerted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Alerted": {
+      "main": [
+        [
+          {
+            "node": "Patch Alerted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
   "settings": {
     "executionOrder": "v1",
     "saveDataErrorExecution": "all",
     "saveDataSuccessExecution": "all",
-    "executionTimeout": 60
+    "executionTimeout": 180
   }
 }

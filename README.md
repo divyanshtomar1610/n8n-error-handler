@@ -2,6 +2,8 @@
 
 One n8n workflow that every other workflow points at as its Error Workflow: it classifies each failure, logs it to Notion, alerts by Slack and email, and does not send the same failure twice inside a short window.
 
+**Why I built this.** A scheduled workflow of mine failed and nothing said so until someone looked. This handler is the answer: one place that watches every workflow, logs first, alerts once.
+
 ## What it is for
 
 Unattended n8n workflows (scheduled jobs, webhooks) fail silently unless something is watching. Wiring an alert into each workflow by hand is easy to forget, and an alert channel that repeats the same failure over and over gets muted.
@@ -24,7 +26,7 @@ You need n8n 2.22.0 or later (cloud or self-hosted; older versions need one chan
 2. Create the Notion error log database described in [SETUP.md, section 1a](SETUP.md#1a-the-notion-error-log-database).
 3. Replace every `{PLACEHOLDER}` in the nodes. The table in [SETUP.md, section 2](SETUP.md#2-import-and-fill-the-placeholders) lists each one and where it lives.
 4. Pick credentials on the five credential pickers: Notion on three nodes, Slack on one, Gmail on one.
-5. Save. Then open each unattended workflow, go to **Settings**, and set **Error workflow** to this one.
+5. Save, then **Publish**: n8n runs only the published version of an error workflow, and that applies to every later edit too. Then open each unattended workflow, go to **Settings**, and set **Error workflow** to this one.
 
 `workflow.json` contains no credentials, no IDs from a real workspace and no addresses. Every value you must supply is a `{PLACEHOLDER}`.
 
@@ -46,6 +48,8 @@ You should see:
 | P3 | None | None | Severity P3, Alerted = None |
 | P2 again within 6 hours | None | None | Severity P2, Alerted = Suppressed |
 
+To re-test after a change, archive the earlier injector rows in the Notion log first, or wait out the window (1 hour for P1, 6 hours for P2 and P3): a repeat inside the window is suppressed on purpose, whatever the tier.
+
 If the P2 test arrives by email and not in Slack, the Slack app is not a member of the channel.
 
 Fire the injector again after every change to the handler, so the alert path is proved again and not assumed.
@@ -60,14 +64,16 @@ Before you re-run anything that sends: sort the error into "proven not sent" or 
 
 - It depends on Notion, Slack and Gmail as shipped. You can swap the email node (SETUP.md says what else to change), but the log and the repeat check are written for the Notion API.
 - It runs inside n8n. If your n8n instance is down, nothing fires. Point an outside uptime or heartbeat check at the same Slack channel to cover that case.
+- Only a row that was actually delivered (Alerted = Both, Slack or Email) counts as an earlier alert, so a failure that keeps recurring is alerted again once each window, and a row whose sends both failed never silences the next one.
+- Failures that arrive within seconds of each other all alert: the repeat check reads the log, and the first row is still being written while the second failure is classified.
 - Repeat suppression reads the Notion log. If that query fails, the alert is sent anyway, so you can get a duplicate during a Notion outage.
 - Repeats are matched on workflow, node, severity and the first 80 characters of the message. Two different failures that share those four values inside the window count as one.
 - If Slack and email both fail, the only records are the Notion row (with Alerted left empty) and the handler's own failed execution in n8n.
 - The Notion calls use API version `2022-06-28` by header. Raising it means changing the two Notion URLs as well.
 - The Slack node is typeVersion 2.5. On an n8n version older than 2.22.0, change it to 2.3 before importing and run the fault injector again.
 - The classifier rules are regular expressions and node names that you write. A production failure that matches none of them lands in P2, so nothing is silently downgraded. Without rules from you, only credential and authorisation errors are raised to P1.
-- Error text is masked before it is logged or sent: the query string of any URL, bearer and basic tokens, `key=value` pairs named like secrets, and any unbroken run of 40 or more letters and digits. The masking is pattern-based, so treat the log and the alert channel as places a secret could still reach, and limit who can read them.
-- The two safeguards above (the name check on the test override and the masking) were added on 2026-11-20 and checked with a local test of the Classify code, not with a new fault-injector run inside n8n. Run your fault injector after import, as the section above says.
+- Error text is masked before it is logged or sent: a user name and password inside a URL, the query string of any URL, Slack and Telegram webhook paths, bearer and basic tokens, `key=value` pairs whose key ends in words like key, token, secret, password or authorization, and any unbroken run of 40 or more letters and digits outside a link or a file path. The masking is pattern-based, so treat the log and the alert channel as places a secret could still reach, and limit who can read them.
+- Proved on 2026-11-20 with the fault injector described above, on this exact version: a P1 firing posted to Slack, sent the email and marked the row Both; a P2 fired again inside its window was suppressed; a P3 wrote the log row and sent nothing.
 
 ## Licence
 
