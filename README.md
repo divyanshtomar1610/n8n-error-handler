@@ -1,6 +1,6 @@
 # n8n error handler
 
-One n8n workflow that every other workflow points at as its Error Workflow: it classifies each failure, logs it to Notion, alerts by Slack and email, and does not send the same failure twice inside a short window.
+One n8n workflow that every other workflow points at as its Error Workflow: it classifies each failure, alerts you, and does not send the same failure twice inside a short window. Two versions: **lite** (Slack only, one credential, five minutes) and **full** (adds a Notion log, email for the worst failures, and an email fallback when Slack is down).
 
 **Why I built this.** A scheduled workflow of mine failed and nothing said so until someone looked. This handler is the answer: one place that watches every workflow, logs first, alerts once.
 
@@ -8,9 +8,9 @@ One n8n workflow that every other workflow points at as its Error Workflow: it c
 
 Unattended n8n workflows (scheduled jobs, webhooks) fail silently unless something is watching. Wiring an alert into each workflow by hand is easy to forget, and an alert channel that repeats the same failure over and over gets muted.
 
-This handler gives each failure one of three tiers, writes the log row before it sends anything, and suppresses repeats. It still alerts when the log or Slack is down.
+This handler gives each failure one of three tiers and suppresses repeats. The full version also writes a log row before it sends anything, and still alerts when the log or Slack is down.
 
-| Tier | Meaning | What happens |
+| Tier (full version) | Meaning | What happens |
 |---|---|---|
 | P1 | A record was lost or unconfirmed, a critical workflow failed, or a credential is dead | Slack post and email |
 | P2 | Any other production failure | Slack post |
@@ -18,7 +18,24 @@ This handler gives each failure one of three tiers, writes the log row before it
 
 ## Run it in one minute
 
-The import takes about a minute. The full setup takes longer, because you create one Notion database and pick three credentials. [SETUP.md](SETUP.md) has every step.
+Start with the lite version. You need n8n 2.22.0 or later and a Slack app that can post to your alert channel.
+
+1. In n8n, create a workflow, open the three-dot menu, choose **Import from File**, and select `workflow-lite.json`.
+2. On **Slack Alert**, set **Authentication** to match your Slack credential (OAuth2, or Access Token for a bot token), pick the credential, and replace `{SLACK_CHANNEL_ID}` with the channel ID (the channel's About tab, at the bottom). Keep the handler in the same project as the workflows it watches.
+3. Save, then **Publish**. n8n runs only the published version of an error workflow; publish again after every edit.
+4. Open each unattended workflow, go to **Settings**, and set **Error workflow** to this one.
+
+| Tier | Lite version |
+|---|---|
+| P1 | A credential or authorisation failure (including any 401 or 403): posted |
+| P2 | Any other failure: posted |
+| P3 | Workflows whose name starts with TEST, TEMP or DEMO: not posted |
+
+The same failure (same workflow, node, tier and message) is posted once, then not again for 1 hour (P1) or 6 hours (P2). There is no database: the repeat check is kept in the handler's own workflow data, which n8n saves for published runs. Only a post Slack accepted is remembered, so a failed post never silences the next one. To change the TEST/TEMP/DEMO rule or the windows, edit the two lines at the top of the **Classify** node.
+
+## Upgrade to the full version
+
+The full version (`workflow.json`) adds a Notion log of every failure, email for P1, an email fallback when Slack is down, dated mutes for known conditions, and your own P1 rules. The import takes a minute; the setup takes longer, because you create one Notion database and pick three credentials. [SETUP.md](SETUP.md) has every step.
 
 You need n8n 2.22.0 or later (cloud or self-hosted; older versions need one change, see Limits), a Notion integration, a Slack app that can post to your alert channel, and a Gmail account or another email node.
 
@@ -28,7 +45,7 @@ You need n8n 2.22.0 or later (cloud or self-hosted; older versions need one chan
 4. Pick credentials on the five credential pickers: Notion on three nodes, Slack on one, Gmail on one.
 5. Save, then **Publish**: n8n runs only the published version of an error workflow, and that applies to every later edit too. Then open each unattended workflow, go to **Settings**, and set **Error workflow** to this one.
 
-`workflow.json` contains no credentials, no IDs from a real workspace and no addresses. Every value you must supply is a `{PLACEHOLDER}`.
+Neither file contains credentials, IDs from a real workspace or addresses. Every value you must supply is a `{PLACEHOLDER}`.
 
 ## How to check it worked
 
@@ -39,7 +56,7 @@ An error workflow cannot be tested from a manual run, so you build a second, tin
 3. Set its Error workflow to the handler. Add no credentials and no node that touches a real system.
 4. Fire each trigger once. SETUP.md gives two ways to do that.
 
-You should see:
+With the lite version, P1 and P2 each post one Slack message, P3 posts nothing, and P2 fired again within 6 hours posts nothing. With the full version you should see:
 
 | You fire | Slack | Email | Notion row |
 |---|---|---|---|
@@ -48,7 +65,7 @@ You should see:
 | P3 | None | None | Severity P3, Alerted = None |
 | P2 again within 6 hours | None | None | Severity P2, Alerted = Suppressed |
 
-To re-test after a change, archive the earlier injector rows in the Notion log first, or wait out the window (1 hour for P1, 6 hours for P2 and P3): a repeat inside the window is suppressed on purpose, whatever the tier.
+To re-test the lite version inside the window, change the injector's message by one word (a different message is a different failure). To re-test the full version, archive the earlier injector rows in the Notion log first, or wait out the window (1 hour for P1, 6 hours for P2 and P3): a repeat inside the window is suppressed on purpose, whatever the tier.
 
 If the P2 test arrives by email and not in Slack, the Slack app is not a member of the channel.
 
@@ -62,6 +79,11 @@ Before you re-run anything that sends: sort the error into "proven not sent" or 
 
 ## Limits
 
+- **Lite:** if Slack is down or the app was removed from the channel, the failure is not posted anywhere (the full version falls back to email). The failure still shows in n8n's own execution list.
+- **Lite:** two failures within a second of each other can both be posted, because each reads the repeat store before the other writes it. The worst case is an extra post, never a lost one.
+- **Both:** if Slack accepts a post but its reply times out, the retry posts it a second time.
+- **Both:** the repeat check ignores timestamps in a message but not other numbers, so a failure whose message carries an item ID or a count is posted each time the number changes.
+- **Lite:** proved on 2026-11-20 with the fault injector on n8n cloud: a P2 posted, the same P2 again was not posted, a P1 posted, a P3 was not posted.
 - It depends on Notion, Slack and Gmail as shipped. You can swap the email node (SETUP.md says what else to change), but the log and the repeat check are written for the Notion API.
 - It runs inside n8n. If your n8n instance is down, nothing fires. Point an outside uptime or heartbeat check at the same Slack channel to cover that case.
 - Only a row that was actually delivered (Alerted = Both, Slack or Email) counts as an earlier alert, so a failure that keeps recurring is alerted again once each window, and a row whose sends both failed never silences the next one.
