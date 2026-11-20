@@ -94,7 +94,7 @@ The `Classify` node holds one ordered rule table; the first rule that matches wi
 
 Error workflows cannot be tested from a manual run, and you do not want to break a real workflow to test them. Build a second, tiny workflow:
 
-1. Create a workflow named `{WORKSPACE_PREFIX} Fault Injector (positive control)`.
+1. Create a workflow named `{WORKSPACE_PREFIX} Fault Injector (positive control)`. Keep the words "Fault Injector" in the name: the handler only obeys the test messages below when the failing workflow carries that name.
 2. Add three Schedule Trigger nodes named `Fire P1`, `Fire P2`, `Fire P3`, each set to Trigger Interval: Custom (Cron), with an expression that never fires in practice, for example `0 4 29 2 *` (minute 0, hour 4, day 29, month 2, any weekday). It fires once on 29 February 2028 at 04:00 in your instance's timezone; expect one deliberate P1, P2 and P3 that morning, or deactivate the injector beforehand.
 3. Connect each to a Stop and Error node whose message is exactly `FAULT-INJECTOR P1: deliberate failure (positive control)` (and P2, P3 for the others). Keep the message fixed, with no timestamp, so a second firing counts as a repeat.
 4. Optional backoff proof: add two more triggers feeding two HTTP Request nodes to a public URL that answers 429, such as `https://httpbin.org/status/429` (a free public test service; confirm it still answers 429 before relying on it), one with Retry On Fail (3 tries, 5000 ms) and one without.

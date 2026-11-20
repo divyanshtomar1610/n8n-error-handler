@@ -32,7 +32,7 @@ You need n8n 2.22.0 or later (cloud or self-hosted; older versions need one chan
 
 An error workflow cannot be tested from a manual run, so you build a second, tiny workflow that fails on purpose: the fault injector. [SETUP.md, section 4](SETUP.md#4-build-the-fault-injector-the-positive-control) has the build steps. In short:
 
-1. Create a workflow named `Fault Injector (positive control)` with three Schedule Trigger nodes on a cron that never fires in practice (`0 4 29 2 *`).
+1. Create a workflow named `Fault Injector (positive control)` with three Schedule Trigger nodes on a cron that never fires in practice (`0 4 29 2 *`). Keep the words "Fault Injector" in the name: the test messages only set the severity when the failing workflow carries that name, so an ordinary error cannot lower its own severity by quoting one.
 2. Connect each trigger to a Stop and Error node with a fixed message: `FAULT-INJECTOR P1: deliberate failure (positive control)`, then the same for P2 and P3.
 3. Set its Error workflow to the handler. Add no credentials and no node that touches a real system.
 4. Fire each trigger once. SETUP.md gives two ways to do that.
@@ -66,6 +66,8 @@ Before you re-run anything that sends: sort the error into "proven not sent" or 
 - The Notion calls use API version `2022-06-28` by header. Raising it means changing the two Notion URLs as well.
 - The Slack node is typeVersion 2.5. On an n8n version older than 2.22.0, change it to 2.3 before importing and run the fault injector again.
 - The classifier rules are regular expressions and node names that you write. A production failure that matches none of them lands in P2, so nothing is silently downgraded. Without rules from you, only credential and authorisation errors are raised to P1.
+- Error text is masked before it is logged or sent: the query string of any URL, bearer and basic tokens, `key=value` pairs named like secrets, and any unbroken run of 40 or more letters and digits. The masking is pattern-based, so treat the log and the alert channel as places a secret could still reach, and limit who can read them.
+- The two safeguards above (the name check on the test override and the masking) were added on 2026-11-20 and checked with a local test of the Classify code, not with a new fault-injector run inside n8n. Run your fault injector after import, as the section above says.
 
 ## Licence
 
